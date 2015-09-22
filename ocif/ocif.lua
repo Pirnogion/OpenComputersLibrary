@@ -1,37 +1,17 @@
---[[
-Автор: Pirnogion
-Основная идея формата .ocif(Open Computers image format): 
-	-Запись:
-		1. Берется информация об 1 пикселе изображени( цвет фона, цвет символа, символ )
-		2. Цвета перекодируется из 24 битной(требует 3 байта) паитры в 8 битную(требует 1 байт)
-		3. Символ перекодируется в его число в кодировке utf8 и разбивается на отдельные байты
-		4. Все полученные числа перекодируются в ASCII-симолы и записываются в файл
-
-	-Чтение:
-		1. Цвета считываются из файла и кодируются в HEX-записи с преобразованием в 24 битную палитру
-		2. Сичтывается один байт идущий после байтов цветов
-		3. По считанному байту определяется количество байт, которыми закодирован utf8 символ
-		4. Считанные байты символа перекодиркются в utf8 символ
-		5. Информация о цветах и символе заносится в массив
-
-	-Примечания:
-		Для идентификации файла придумана его подпись(сигнатура) размером в 7бит нагло спизженная с реального формата .PNG.
-		Чисто для создания атмосферы и, естественно, для пафоса.
-
-	-Вид массива:
-		image_array = { {[1] = <foreground>, [2] = <background>, [3] = <alpha>, [4] = <char>}, ... }
-
-	-Планы:
-		1. Запилить анимации...........................................( )
---]]
+--------ocif--------
+--Автор: Pirnogion--
+--------------------
 
 --CONSTANTS--
 local IMAGE_FG = 3
 local IMAGE_BG = 2
 local IMAGE_AL = 1
-local IMAGE_CH = 0
 
-local ELEMENT_COUNT = 4
+local IMAGE_CH = 0
+local IMAGE_COMPRESS = 1
+
+local ELEMENT_COUNT = 2
+local ELEMENT_COUNT_HF = 4
 
 local IMAGE_WIDTH  = 1
 local IMAGE_HEIGHT = 2
@@ -140,9 +120,27 @@ local function HEX_color8to24( hexcolor8 )
 	return RGBtoHEX( rr, gg, bb )
 end
 
+local function compressPixel(foreground, background, alpha)
+	return bit32.lshift( foreground, BYTE*2 ) + bit32.lshift( background, BYTE ) + alpha
+end
+
+local function decompressPixel( compressed_pixel )
+	return bit32.rshift( compressed_pixel, BYTE*2 ), bit32.rshift( bit32.band( compressed_pixel, 0x00FF00 ), BYTE ), bit32.band( compressed_pixel, 0x0000FF )
+end
+
 --Подготавливает цвета и символ для записи в файл
 --Preparation colors and char from write to file
-local function encodePixel(hexcolor_fg, hexcolor_bg, alpha, char)
+local function encodePixel(compressed_pixel, char)
+	--split hex-colors
+	local new_fg, new_bg, alpha = decompressPixel( compressed_pixel )
+	local ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6 = string.byte( char, 1, 6 )
+
+	ascii_char1 = ascii_char1 or NULL_CHAR
+
+	return new_fg, new_bg, alpha, ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6
+end
+
+local function encodePixel_hf(hexcolor_fg, hexcolor_bg, alpha, char)
 	--split hex-colors
 	local new_fg = HEX_color24to8( hexcolor_fg )
 	local new_bg = HEX_color24to8( hexcolor_bg )
@@ -182,24 +180,37 @@ end
 
 --Запись в файл по массиву изображения
 --Write image array to file
-function imageAPI.write(path, image)
+function imageAPI.write(path, image, human_form)
+	local elementCount = human_form and ELEMENT_COUNT_HF or ELEMENT_COUNT
+	local encodedPixel = nil
 	local file = assert( io.open(path, "w"), FILE_OPEN_ERROR )
 
 	file:write( table.unpack(ocif_signature_expand) )
 	file:write( string.char( image[IMAGE_WIDTH]  ) )
 	file:write( string.char( image[IMAGE_HEIGHT] ) )
-
-	for element = ELEMENT_COUNT, image[IMAGE_HEIGHT] * image[IMAGE_WIDTH] * ELEMENT_COUNT, ELEMENT_COUNT do
-		local encodedPixel =
-		{
-			encodePixel
-			(
-				image[IMAGE][element-IMAGE_FG],
-				image[IMAGE][element-IMAGE_BG],
-				image[IMAGE][element-IMAGE_AL],
-				image[IMAGE][element-IMAGE_CH]
-			)
-		}
+	
+	for element = elementCount, image[IMAGE_HEIGHT] * image[IMAGE_WIDTH] * elementCount, elementCount do
+		if ( human_form ) then
+			encodedPixel =
+			{
+				encodePixel_hf
+				(
+					image[IMAGE][element-IMAGE_FG],
+					image[IMAGE][element-IMAGE_BG],
+					image[IMAGE][element-IMAGE_AL],
+					image[IMAGE][element-IMAGE_CH]
+				)
+			}
+		else
+			encodedPixel =
+			{
+				encodePixel
+				(
+					image[IMAGE][element-IMAGE_COMPRESS],
+					image[IMAGE][element-IMAGE_CH]
+				)
+			}
+		end
 		for i = 1, #encodedPixel do
 			file:write( string.char( encodedPixel[i] ) )
 		end
@@ -226,10 +237,8 @@ function imageAPI.read(path)
 	image[IMAGE] = {}
 
 	for element = ELEMENT_COUNT, image[IMAGE_HEIGHT] * image[IMAGE_WIDTH] * ELEMENT_COUNT, ELEMENT_COUNT do
-		image[IMAGE][element-IMAGE_FG] = HEX_color8to24( readBytes(file, 1) )
-		image[IMAGE][element-IMAGE_BG] = HEX_color8to24( readBytes(file, 1) )
-		image[IMAGE][element-IMAGE_AL] = readBytes(file, 1)
-		image[IMAGE][element-IMAGE_CH] = decodeChar( file )
+		image[IMAGE][element-IMAGE_COMPRESS] = readBytes(file, 3)
+		image[IMAGE][element-IMAGE_CH]       = decodeChar( file )
 	end
 
 	file:close()
@@ -248,9 +257,11 @@ function imageAPI.draw(image, sx, sy, gpu)
 		y = (x == 1) and y+1 or y
 
 		local _, _, back_color = gpu.get(sx+x-1, sy+y-1)
+		local fg8, bg8, al = decompressPixel( image[IMAGE][element-IMAGE_COMPRESS] )
+		local fg24, bg24 = HEX_color8to24( fg8 ), HEX_color8to24( bg8 )
 
-		currentFG = image[IMAGE][element-IMAGE_FG]
-		currentBG = alpha_blend( back_color, image[IMAGE][element-IMAGE_BG], image[IMAGE][element-IMAGE_AL] )
+		currentFG = fg24
+		currentBG = alpha_blend( back_color, bg24, al )
 
 		if ( currentFG ~= prevFG ) then
 			prevFG = currentFG
