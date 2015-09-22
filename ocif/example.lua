@@ -6,14 +6,14 @@ local IMAGE_WIDTH  = 1
 local IMAGE_HEIGHT = 2
 local IMAGE        = 3
 
---Сырое изображение, т.е. массив
+--Сырое изображение, т.е. массив(первый формат, удобен для редактирования из редактора)
 local ocif_image_raw = {
 	[IMAGE_WIDTH] = 8, --Ширина изображения
 	[IMAGE_HEIGHT] = 5, --Высота изображения
 	[IMAGE] = { 
 		0x000000, 0xFFFFFF, 200, '1',
 		0x000000, 0xFFFFFF, 200, '0', 
-		0x000000, 0xFFFFFF, 200, '1',
+		0x000000, 0xFFFFFF, 200, 'З',
 		0x000000, 0xFFFFFF, 200, '0',
 		0x000000, 0xFFFFFF, 200, '1',
 		0x000000, 0x004980, 200, ' ',
@@ -21,7 +21,7 @@ local ocif_image_raw = {
 		0x000000, 0x004980, 200, ' ',
 
 		0x000000, 0x004980, 0, ' ',
-		0x000000, 0xFFFFFF, 0, '1', 
+		0xFF0000, 0xFFFFFF, 0, '1', 
 		0x000000, 0xFFFFFF, 0, '0',
 		0x000000, 0xFFFFFF, 0, '1',
 		0x000000, 0xFFFFFF, 0, '0',
@@ -33,7 +33,7 @@ local ocif_image_raw = {
 		0x000000, 0x004980, 0, ' ', 
 		0x000000, 0xFFFFFF, 0, '1',
 		0x000000, 0xFFFFFF, 0, '0',
-		0x000000, 0xFFFFFF, 0, 'З',
+		0x000000, 0xFFFFFF, 0, '1',
 		0x000000, 0xFFFFFF, 0, '0', 
 		0x000000, 0xFFFFFF, 0, '1',
 		0x000000, 0x004980, 0, ' ',
@@ -58,14 +58,19 @@ local ocif_image_raw = {
 	}
 }
 
---Запись в файл сырого изображения
-ocif.write("ocif_test.ocif", ocif_image_raw)
-
---Чтение изображения
+--Запись в файл сырого изображения в "удобном" формате, т.е во вторичном(последний аргумент)
+ocif.write("ocif_test.ocif", ocif_image_raw, true)
+--Чтение изображения(получили массив изображения в "неудобном" формате, т.е основном)
 local ocif_image = ocif.read("ocif_test.ocif")
-
 --Вывод изображения
 ocif.draw( ocif_image, 16, 13, gpu )
+
+--Запись в файл сырого изображения в "неудобном" формате(который был ранее уже прочитан из файла)
+ocif.write("ocif_test.ocif", ocif_image)
+--Чтение изображения
+local ocif_image = ocif.read("ocif_test.ocif")
+--Вывод изображения
+ocif.draw( ocif_image, 36, 15, gpu )
 
 --Для дебага--
 gpu.setBackground(0)
