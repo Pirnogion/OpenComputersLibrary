@@ -2,6 +2,15 @@
 --Автор: Pirnogion--
 --------------------
 
+--SWITCH
+local MODE = nil
+local PALETTE_PATH = "palette.cia"
+
+--MODES
+local MODES = {
+	["MODE_24BIT"] = "24bit",
+}
+
 --CONSTANTS--
 local FOREGROUND = 3
 local BACKGROUND = 2
@@ -38,8 +47,6 @@ end
 local ocif_signature1 = 0x896F6369
 local ocif_signature2 = 0x00661A0A --7 bytes: 89 6F 63 69 66 1A 0A
 local ocif_signature_expand = { string.char(0x89), string.char(0x6F), string.char(0x63), string.char(0x69), string.char(0x66), string.char(0x1A), string.char(0x0A) }
-
-local imageAPI = {}
 
 --Выделить бит-терминатор в первом байте utf8 символа: 1100 0010 --> 0010 0000
 local function selectTerminateBit_l()
@@ -83,7 +90,7 @@ local function readBytes(file, bytes)
 end
 
 --Преобразует цвет в hex записи в rgb запись
-function HEXtoRGB(color)
+local function HEXtoRGB(color)
   local rr = bit32.rshift( color, 16 )
   local gg = bit32.rshift( bit32.band(color, 0x00ff00), 8 )
   local bb = bit32.band(color, 0x0000ff)
@@ -91,7 +98,7 @@ function HEXtoRGB(color)
   return rr, gg, bb
 end
 
-function RGBtoHEX(rr, gg, bb)
+local function RGBtoHEX(rr, gg, bb)
   return bit32.lshift(rr, 16) + bit32.lshift(gg, 8) + bb
 end
 
@@ -143,24 +150,42 @@ local function decompressPixel( compressed_pixel )
 end
 
 --Подготавливает цвета и символ для записи в файл
-local function encodePixel(compressed_pixel, char)
+local function encodePixel(compressed_pixel, _, _, _, char)
 	local decompressed_fg, decompressed_bg, alpha = decompressPixel( compressed_pixel )
 	local ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6 = string.byte( char, 1, 6 )
 
 	ascii_char1 = ascii_char1 or NULL_CHAR
 
-	return decompressed_fg, decompressed_bg, alpha, ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6
+	return { decompressed_fg, decompressed_bg, alpha, ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6 }
 end
 
-local function encodePixel_full_array(hexcolor_fg, hexcolor_bg, alpha, char)
-	local decompressed_fg = HEX_color24to8( hexcolor_fg )
-	local decompressed_bg = HEX_color24to8( hexcolor_bg )
+local function encodePixel_full_array(compressed_pixel, hexcolor_fg, hexcolor_bg, alpha, char)
+	local converted_fg = HEX_color24to8( hexcolor_fg )
+	local converted_bg = HEX_color24to8( hexcolor_bg )
 	local ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6 = string.byte( char, 1, 6 )
 
 	ascii_char1 = ascii_char1 or NULL_CHAR
 
-	return decompressed_fg, decompressed_bg, alpha, ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6
+	return { converted_fg, converted_bg, alpha, ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6 }
 end
+
+local function encodePixel_24bit_mode(_, hexcolor_fg, hexcolor_bg, alpha, char)
+	local red_fg, green_fg, blue_fg = HEXtoRGB( hexcolor_fg )
+	local red_bg, green_bg, blue_bg = HEXtoRGB( hexcolor_bg )
+	local ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6 = string.byte( char, 1, 6 )
+	ascii_char1 = ascii_char1 or NULL_CHAR
+
+	return { red_fg, green_fg, blue_fg, red_bg, green_bg, blue_bg, alpha, ascii_char1, ascii_char2, ascii_char3, ascii_char4, ascii_char5, ascii_char6 }
+end
+
+--Выбор метода записи
+local encodePixel =
+{
+	[MODES.MODE_24BIT] = encodePixel_24bit_mode,
+
+	[true]  = encodePixel_full_array,
+	[false]	= encodePixel
+}
 
 --Декодирование utf8 символа
 local function decodeChar(file)
@@ -188,10 +213,28 @@ local function decodeChar(file)
 	return string.char( table.unpack( charcode_array ) )
 end
 
+local imageAPI = {}
+
+--Установить режим работы
+function imageAPI.setMode( mode )
+	MODE = mode
+end
+
+--Установит путь до палитры
+function imageAPI.setPalette( palette_path )
+	PALETTE_PATH = palette_path
+end
+
+--Получить текущий режим
+function imageAPI.getMode()
+	return MODE
+end
+
 --Запись в файл по массиву изображения
 function imageAPI.write(path, image, full_array)
-	local elementCount = full_array and ELEMENT_COUNT_FULL_ARRAY or ELEMENT_COUNT
+	local elementCount = (full_array or MODE == MODES.MODE_24BIT) and ELEMENT_COUNT_FULL_ARRAY or ELEMENT_COUNT
 	local encodedPixel = nil
+
 	local file = assert( io.open(path, "w"), FILE_OPEN_ERROR )
 
 	file:write( table.unpack(ocif_signature_expand) )
@@ -199,29 +242,15 @@ function imageAPI.write(path, image, full_array)
 	file:write( string.char( image[IMAGE_HEIGHT] ) )
 	
 	for element = elementCount, image[IMAGE_HEIGHT] * image[IMAGE_WIDTH] * elementCount, elementCount do
-		if ( full_array ) then
-		--Погдотовка к записи по полному массиву(full_array)
-			encodedPixel =
-			{
-				encodePixel_full_array
-				(
-					image[IMAGE][element-FOREGROUND],
-					image[IMAGE][element-BACKGROUND],
-					image[IMAGE][element-ALPHA_CHANNEL],
-					image[IMAGE][element-UTF8_CHAR]
-				)
-			}
-		else
-		--Погдотовка к записи по сжатому массиву
-			encodedPixel =
-			{
-				encodePixel
-				(
-					image[IMAGE][element-COMPRESSED_PIXEL],
-					image[IMAGE][element-UTF8_CHAR]
-				)
-			}
-		end
+		--Подготовка пикселя к записи
+		encodedPixel = encodePixel[MODE or full_array or false]
+		(
+			image[IMAGE][element-COMPRESSED_PIXEL],
+			image[IMAGE][element-FOREGROUND],
+			image[IMAGE][element-BACKGROUND],
+			image[IMAGE][element-ALPHA_CHANNEL],
+			image[IMAGE][element-UTF8_CHAR]
+		)
 
 		--Запись
 		for i = 1, #encodedPixel do
@@ -235,6 +264,7 @@ end
 --Чтение из файла, возвращет массив изображения
 function imageAPI.read(path)
 	local image = {}
+	local elementCount = (MODE == MODES.MODE_24BIT) and ELEMENT_COUNT_FULL_ARRAY or ELEMENT_COUNT
 	local file = assert( io.open(path, "rb"), FILE_OPEN_ERROR )
 
 	--Чтение подписи файла
@@ -249,9 +279,16 @@ function imageAPI.read(path)
 
 	image[IMAGE] = {}
 
-	for element = ELEMENT_COUNT, image[IMAGE_HEIGHT] * image[IMAGE_WIDTH] * ELEMENT_COUNT, ELEMENT_COUNT do
-		image[IMAGE][element-COMPRESSED_PIXEL] = readBytes(file, 3)
-		image[IMAGE][element-UTF8_CHAR]       = decodeChar( file )
+	for element = elementCount, image[IMAGE_HEIGHT] * image[IMAGE_WIDTH] * elementCount, elementCount do
+		if ( MODE == MODES.MODE_24BIT ) then
+			image[IMAGE][element-FOREGROUND] = readBytes(file, 3)
+			image[IMAGE][element-BACKGROUND] = readBytes(file, 3)
+			image[IMAGE][element-ALPHA_CHANNEL] = readBytes(file, 1)
+		else
+			image[IMAGE][element-COMPRESSED_PIXEL] = readBytes(file, 3)
+		end
+
+		image[IMAGE][element-UTF8_CHAR] = decodeChar( file )
 	end
 
 	file:close()
@@ -264,13 +301,20 @@ function imageAPI.draw(image, sx, sy, gpu)
 	local x, y = 0, 0
 	local prevBG, prevFG = nil, nil
 	local currentBG, currentFG = nil, nil
-	for element = ELEMENT_COUNT, image[IMAGE_HEIGHT] * image[IMAGE_WIDTH] * ELEMENT_COUNT, ELEMENT_COUNT do	
+	local elementCount = (MODE == MODES.MODE_24BIT) and ELEMENT_COUNT_FULL_ARRAY or ELEMENT_COUNT
+	for element = elementCount, image[IMAGE_HEIGHT] * image[IMAGE_WIDTH] * elementCount, elementCount do	
 		x = (x % image[IMAGE_WIDTH]) + 1
 		y = (x == 1) and y+1 or y
 
 		local _, _, back_color = gpu.get(sx+x-1, sy+y-1)
-		local fg8, bg8, al = decompressPixel( image[IMAGE][element-COMPRESSED_PIXEL] )
-		local fg24, bg24 = HEX_color8to24( fg8 ), HEX_color8to24( bg8 )
+		local fg8, bg8, al, fg24, bg24
+
+		if ( MODE == MODES.MODE_24BIT ) then
+			fg24, bg24, al = image[IMAGE][element-FOREGROUND], image[IMAGE][element-BACKGROUND], image[IMAGE][element-ALPHA_CHANNEL]
+		else
+			fg8, bg8, al = decompressPixel( image[IMAGE][element-COMPRESSED_PIXEL] )
+			fg24, bg24 = HEX_color8to24( fg8 ), HEX_color8to24( bg8 )
+		end
 
 		currentFG = fg24
 		currentBG = alphaBlend( back_color, bg24, al )
