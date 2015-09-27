@@ -58,11 +58,11 @@ local ocif_image_raw = {
 	}
 }
 
---Режим записи 24bit(больше размер файла) или 8bit
-ocif.setMode( "24bit" )
+--Режим записи 24bit(больше размер файла, точная цветопередача) или 8bit
+ocif.setMode( "8bit" )
 
 --Путь до палитры(по умолчанию palette.cia)
-ocif.setPalette( "palette.cia" )
+--ocif.setPalette( "palette.cia" )
 
 --Запись в файл сырого изображения в "удобном" формате, т.е во вторичном(последний аргумент)
 ocif.write("ocif_test.ocif", ocif_image_raw, true)
