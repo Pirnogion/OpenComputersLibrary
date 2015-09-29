@@ -24,7 +24,8 @@ local ELEMENT_COUNT_FULL_ARRAY = 4
 
 local IMAGE_WIDTH  = 1
 local IMAGE_HEIGHT = 2
-local IMAGE        = 3
+local IMAGE_FRAMES = 3
+local IMAGE        = 4
 
 local BYTE_SIZE = 8
 local NULL_CHAR = 0
@@ -50,8 +51,6 @@ end
 local ocif_signature1 = 0x896F6369
 local ocif_signature2 = 0x00661A0A --7 bytes: 89 6F 63 69 66 1A 0A
 local ocif_signature_expand = { string.char(0x89), string.char(0x6F), string.char(0x63), string.char(0x69), string.char(0x66), string.char(0x1A), string.char(0x0A) }
-
-reloadPalette()
 
 --Выделить бит-терминатор в первом байте utf8 символа: 1100 0010 --> 0010 0000
 local function selectTerminateBit_l()
@@ -241,7 +240,7 @@ end
 
 --Установить путь до палитры
 function imageAPI.setPalette( palette_path )
-	PALETTE_PATH = palette_path
+	PALETTE_PATH = palette_path or PALETTE_PATH
 	reloadPalette()
 end
 
@@ -260,21 +259,24 @@ function imageAPI.write(path, picture, full_array)
 	file:write( table.unpack(ocif_signature_expand) )
 	file:write( string.char( picture[IMAGE_WIDTH]  ) )
 	file:write( string.char( picture[IMAGE_HEIGHT] ) )
+	file:write( string.char( picture[IMAGE_FRAMES] ) )
 	
-	for element = elementCount, picture[IMAGE_HEIGHT] * picture[IMAGE_WIDTH] * elementCount, elementCount do
-		--Подготовка пикселя к записи
-		encodedPixel = encodePixel[MODE or full_array or false]
-		(
-			picture[IMAGE][element-COMPRESSED_PIXEL],
-			picture[IMAGE][element-FOREGROUND],
-			picture[IMAGE][element-BACKGROUND],
-			picture[IMAGE][element-ALPHA_CHANNEL],
-			picture[IMAGE][element-UTF8_CHAR]
-		)
+	for frame=0, picture[IMAGE_FRAMES]-1, 1 do
+		for element = elementCount, picture[IMAGE_HEIGHT] * picture[IMAGE_WIDTH] * elementCount, elementCount do
+			--Подготовка пикселя к записи
+			encodedPixel = encodePixel[MODE or full_array or false]
+			(
+				picture[IMAGE+frame][element-COMPRESSED_PIXEL],
+				picture[IMAGE+frame][element-FOREGROUND],
+				picture[IMAGE+frame][element-BACKGROUND],
+				picture[IMAGE+frame][element-ALPHA_CHANNEL],
+				picture[IMAGE+frame][element-UTF8_CHAR]
+			)
 
-		--Запись
-		for i = 1, #encodedPixel do
-			file:write( string.char( encodedPixel[i] ) )
+			--Запись
+			for i = 1, #encodedPixel do
+				file:write( string.char( encodedPixel[i] ) )
+			end
 		end
 	end
 
@@ -282,7 +284,7 @@ function imageAPI.write(path, picture, full_array)
 end
 
 --Чтение из файла, возвращет массив изображения
-function imageAPI.read(path)
+function imageAPI.read(path, full_array)
 	local picture = {}
 	local elementCount = (MODE == MODES.MODE_24BIT) and ELEMENT_COUNT_FULL_ARRAY or ELEMENT_COUNT
 	local file = assert( io.open(path, "rb"), FILE_OPEN_ERROR )
@@ -296,19 +298,22 @@ function imageAPI.read(path)
 
 	picture[IMAGE_WIDTH]  = readBytes(file, 1)
 	picture[IMAGE_HEIGHT] = readBytes(file, 1)
+	picture[IMAGE_FRAMES] = readBytes(file, 1)
 
-	picture[IMAGE] = {}
+	for frame=0, picture[IMAGE_FRAMES]-1, 1 do
+		picture[IMAGE+frame] = {}
 
-	for element = elementCount, picture[IMAGE_HEIGHT] * picture[IMAGE_WIDTH] * elementCount, elementCount do
-		if ( MODE == MODES.MODE_24BIT ) then
-			picture[IMAGE][element-FOREGROUND] = readBytes(file, 3)
-			picture[IMAGE][element-BACKGROUND] = readBytes(file, 3)
-			picture[IMAGE][element-ALPHA_CHANNEL] = readBytes(file, 1)
-		else
-			picture[IMAGE][element-COMPRESSED_PIXEL] = readBytes(file, 3)
+		for element = elementCount, picture[IMAGE_HEIGHT] * picture[IMAGE_WIDTH] * elementCount, elementCount do
+			if ( MODE == MODES.MODE_24BIT or full_array ) then
+				picture[IMAGE+frame][element-FOREGROUND] = readBytes(file, 3)
+				picture[IMAGE+frame][element-BACKGROUND] = readBytes(file, 3)
+				picture[IMAGE+frame][element-ALPHA_CHANNEL] = readBytes(file, 1)
+			else
+				picture[IMAGE+frame][element-COMPRESSED_PIXEL] = readBytes(file, 3)
+			end
+
+			picture[IMAGE+frame][element-UTF8_CHAR] = decodeChar( file )
 		end
-
-		picture[IMAGE][element-UTF8_CHAR] = decodeChar( file )
 	end
 
 	file:close()
@@ -317,7 +322,8 @@ function imageAPI.read(path)
 end
 
 --Отрисовка изображения(Для примера. Медленная. Делайте СВОЮ отрисовку)
-function imageAPI.draw(picture, sx, sy, gpu)
+function imageAPI.draw(picture, frame, sx, sy, gpu)
+	frame = frame - 1
 	local x, y = 0, 0
 
 	local screenBg = nil
@@ -331,16 +337,16 @@ function imageAPI.draw(picture, sx, sy, gpu)
 		_, _, screenBg = gpu.get(sx+x-1, sy+y-1)
 
 		if ( MODE == MODES.MODE_24BIT ) then
-			fg24bit, bg24bit, alpha = picture[IMAGE][element-FOREGROUND], picture[IMAGE][element-BACKGROUND], picture[IMAGE][element-ALPHA_CHANNEL]
+			fg24bit, bg24bit, alpha = picture[IMAGE+frame][element-FOREGROUND], picture[IMAGE+frame][element-BACKGROUND], picture[IMAGE+frame][element-ALPHA_CHANNEL]
 		else
-			fg8bit, bg8bit, alpha = decompressPixel( picture[IMAGE][element-COMPRESSED_PIXEL] )
+			fg8bit, bg8bit, alpha = decompressPixel( picture[IMAGE+frame][element-COMPRESSED_PIXEL] )
 			fg24bit, bg24bit = HEX_color8to24( fg8bit ), HEX_color8to24( bg8bit )
 		end
 
 		gpu.setForeground( fg24bit )
 		gpu.setBackground( alphaBlend( screenBg, bg24bit, alpha ) )
 
-		gpu.set(sx+x-1, sy+y-1, picture[IMAGE][element-UTF8_CHAR])
+		gpu.set(sx+x-1, sy+y-1, picture[IMAGE+frame][element-UTF8_CHAR])
 	end
 end
 
