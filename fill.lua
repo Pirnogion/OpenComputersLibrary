@@ -601,12 +601,13 @@ while true do
 					local startPixel = { masterPixels[iterator], masterPixels[iterator+1], masterPixels[iterator+2], masterPixels[iterator+3] }
 
 					for i=1, masterPixels.height, 1 do
+						iterator = convertCoordsToIterator(x, y+i)
 						if ( masterPixels[iterator] ~= startPixel[1] ) then
 							setPixel(iterator, masterPixels[iterator], masterPixels[iterator+1], masterPixels[iterator+2], masterPixels[iterator+3])
 						else break end
 					end
 
-
+					drawImage()
 				end
 
 				iterator, x, y = nil, nil, nil
