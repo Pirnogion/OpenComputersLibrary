@@ -105,6 +105,7 @@ local instruments = {
 	{"✎", "Brush"},
 	{"❎", "Eraser"},
 	{"Ⓣ", "Text"},
+	{"F", "Fill"},
 }
 local currentInstrument = 1
 local currentBackground = 0x6649ff
@@ -596,6 +597,16 @@ while true do
 					local text = inputText(e[3], e[4], limit)
 					saveTextToPixels(x, y, text)
 					drawImage()
+				elseif ( currentInstrument == 4 ) then
+					local startPixel = { masterPixels[iterator], masterPixels[iterator+1], masterPixels[iterator+2], masterPixels[iterator+3] }
+
+					for i=1, masterPixels.height, 1 do
+						if ( masterPixels[iterator] ~= startPixel[1] ) then
+							setPixel(iterator, masterPixels[iterator], masterPixels[iterator+1], masterPixels[iterator+2], masterPixels[iterator+3])
+						else break end
+					end
+
+
 				end
 
 				iterator, x, y = nil, nil, nil
@@ -752,6 +763,11 @@ while true do
 		--T
 		elseif e[4] == 20 then
 			currentInstrument = 3
+			drawInstruments()
+
+		--FILL
+		elseif ( e[4] ) then
+			currentInstrument = 4
 			drawInstruments()
 
 		elseif e[4] == 32 then
