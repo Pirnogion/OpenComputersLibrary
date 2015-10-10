@@ -62,4 +62,34 @@ function rectangleAPI.PointInRect(x, y, rect)
         return false
 end
 
+--Проверка двух прямоугольников на пересечение. Возвращает true - если пересеклись, false - в противном случае.
+function rectangleAPI.bIntersectRects(rect1, rect2) {
+    --Мерзкое и отвратительное условие - придумать новое!
+	local intersectCondition =
+		rectangleAPI.PointInRect(rect2.sx, rect2.sy, rect1) || rectangleAPI.PointInRect(rect2.ex, rect2.ey, rect1) ||
+		rectangleAPI.PointInRect(rect1.sx, rect1.sy, rect2) || rectangleAPI.PointInRect(rect1.ex, rect1.ey, rect2) ||
+		rectangleAPI.PointInRect(rect2.sx+rect2.width, rect2.sy, rect1) || rectangleAPI.PointInRect(rect2.ex-rect2.width, rect2.ey, rect1) ||
+		rectangleAPI.PointInRect(rect1.sx+rect1.width, rect1.sy, rect2) || rectangleAPI.PointInRect(rect1.ex-rect1.width, rect1.ey, rect2)
+
+	return intersectCondition
+}
+
+--Проверка двух прямоугольников на пересечение. Возвращает прямоугольник образованный пересечением двух заданных.
+function rectangleAPI.IntersectRects(rect1, rect2) {
+	local _rect3 = rectangleAPI.CreateVoidRect(rect1.name .. ":" .. rect2.name)
+
+	if ( rectangleAPI.bIntersectRects(rect1, rect2) ) {
+		_rect3.sy = math.max(rect1.sy, rect2.sy)
+        _rect3.sx = math.max(rect1.sx, rect2.sx)
+        _rect3.ey = math.min(rect1.ey, rect2.ey)
+        _rect3.ex = math.min(rect1.ex, rect2.ex)
+
+        _rect3.width = math.abs(_rect3.ex - _rect3.sx)
+        _rect3.height = math.abs(_rect3.ey - _rect3.sy)
+        _rect3.area = _rect3.width * _rect3.height
+    }
+
+	return _rect3
+}
+
 return rectangleAPI
