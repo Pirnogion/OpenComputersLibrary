@@ -80,14 +80,14 @@ function rectangleAPI.IntersectRects(rect1, rect2)
 
 	if ( rectangleAPI.bIntersectRects(rect1, rect2) ) then
 		_rect3.sy = math.max(rect1.sy, rect2.sy)
-        	_rect3.sx = math.max(rect1.sx, rect2.sx)
-        	_rect3.ey = math.min(rect1.ey, rect2.ey)
-        	_rect3.ex = math.min(rect1.ex, rect2.ex)
+        _rect3.sx = math.max(rect1.sx, rect2.sx)
+        _rect3.ey = math.min(rect1.ey, rect2.ey)
+        _rect3.ex = math.min(rect1.ex, rect2.ex)
 
-        	_rect3.width = math.abs(_rect3.ex - _rect3.sx)
-        	_rect3.height = math.abs(_rect3.ey - _rect3.sy)
-        	_rect3.area = _rect3.width * _rect3.height
-        end
+        _rect3.width = math.abs(_rect3.ex - _rect3.sx)
+        _rect3.height = math.abs(_rect3.ey - _rect3.sy)
+        _rect3.area = _rect3.width * _rect3.height
+    end
 
 	return _rect3
 end
