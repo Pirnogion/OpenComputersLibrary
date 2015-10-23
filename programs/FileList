@@ -1,0 +1,7 @@
+return
+{
+ [1] = {folder="lib", filename="button", version="0"},
+ [2] = {folder="lib", filename="rect", version="0"},
+ [3] = {folder="", filename="RobotPlanner", version="0"},
+ [4] = {folder="", filename="RobotPlanner_controller", version="0"},
+}
