@@ -1,6 +1,7 @@
 local rect = require "rectangle"
 local unicode = require "unicode"
 local event = require "event"
+local computer = require "computer"
 
 --CONST--
 local STATUS_ENABLED = 0
@@ -13,6 +14,38 @@ local function alignTextToCenterRect(rectangle, text)
 	local y = rectangle.sy + rectangle.height/2
 
 	return x, y
+end
+
+local buttons = {}
+local function ButtonReleaseHandler( button, ... )
+	button.timer = nil
+	button.status = STATUS_ENABLED
+	button:redraw()
+end
+
+local function ButtonPressHandler( button, ... )
+	button.action()
+
+	button.status = STATUS_BLINK
+	button:redraw()
+
+	button.timer = event.timer( button.design.blink_time, function() ButtonReleaseHandler( button ) end )
+end
+
+local function ButtonHandler( ... )
+	local e = { ... }
+
+	if ( #buttons > 0 and e[1] == "touch" and e[5] == 0 ) then
+		for i=1, #buttons, 1 do
+			if ( rect.PointInRect(e[3], e[4], buttons[i].rectangle) ) then
+				if ( buttons[i].status == STATUS_ENABLED ) then
+					ButtonPressHandler( buttons[i], ... )
+				end
+
+				break
+			end
+		end
+	end
 end
 
 --Default settings
@@ -47,6 +80,15 @@ end
 --BUTTON API--
 local buttonAPI = {}
 
+function buttonAPI.stop()
+	buttons = {}
+	event.ignore( "touch", ButtonHandler )
+end
+
+function buttonAPI.start()
+	event.listen( "touch", ButtonHandler )
+end
+
 function buttonAPI.create(gpu, rectangle, text, action, design, status)
 	button = {}
 
@@ -56,6 +98,7 @@ function buttonAPI.create(gpu, rectangle, text, action, design, status)
 	button.text 	 = text or default_text
 	button.action 	 = action or default_action
 	button.status    = status or STATUS_ENABLED
+	button.id        = 0
 
 	function button:redraw()
 		self.gpu.setBackground( self.design[self.status].bg )
@@ -68,27 +111,11 @@ function buttonAPI.create(gpu, rectangle, text, action, design, status)
 		end
 	end
 
-	function button:handler(e, callback)
-		if ( self.timer and self.status == STATUS_BLINK ) then
-			self.timer = nil
-			self.status = STATUS_ENABLED
-			self:redraw()
-		end
-		if ( e[1] == "touch" and e[5] == 0 ) then
-			if ( self.status == STATUS_ENABLED ) then
-				if ( rect.PointInRect(e[3], e[4], self.rectangle) ) then
-					self.action()
-
-					self.status = STATUS_BLINK
-					self:redraw()
-
-					self.timer = event.timer( self.design.blink_time, callback )
-					callback(self.timer, self)
-				end
-			end
-		end
+	function button:destroy()
+		table.remove( buttons, button.id )
 	end
 
+	table.insert( buttons, button ); button.id = #buttons
 	return button
 end
 
