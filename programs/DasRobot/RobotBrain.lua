@@ -2,6 +2,7 @@ local computer = require "computer"
 local component = require "component"
 local event = require "event"
 local robot = require "robot"
+local ser = require "serialization"
 
 local inventory = component.inventory_controller
 local wifi = component.modem
@@ -65,6 +66,7 @@ local commands =
 		wifi.send(server, 1, "server.place", result, reason)
 	end,
 
+	--TODO: пофиксить ошибку. Когда нет инструмента в слоте для инструментов, то происходт ошибка на -errorReason.
 	["robot.getInstumentData"] = function()
 		local durability, errorReason = robot.durability()
 
@@ -76,6 +78,20 @@ local commands =
 		local energy = computer.energy()
 
 		wifi.send(server, 1, "server.getEnergy", energy)
+	end,
+
+	["robot.getInventory"] = function()
+		local inv = {}
+		for i=1, 16, 1 do
+			table.insert( inv, inventory.getStackInInternalSlot(i) or false )
+		end
+
+		wifi.send(server, 1, "server.getInventory", ser.serialize(inv), robot.select())
+	end,
+
+	["robot.selectSlot"] = function(slot)
+		robot.select(slot)
+		wifi.send(server, 1, "server.slotSelected")
 	end,
 
 	["robot.shutdown"] = function()
