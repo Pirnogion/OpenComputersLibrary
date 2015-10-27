@@ -1,38 +1,99 @@
+-- ПОДКЛЮЧЕНИЕ СТАНДАРТНЫХ БИБЛИОТЕК --
 local component = require "component"
+local computer = require "computer"
 local unicode = require "unicode"
 local event = require "event"
+local ser = require "serialization"
 
+-- ПОДКЛЮЧЕНИЕ ВНЕШНИХ БИБЛИОТЕК --
+--local ecs = require "ecs"
 local rect = require "rectangle"
 local button = require "button"
+local slot =  require "slot"
 
+-- ПОЛУЧЕНИЕ КОМПАНЕНТОВ --
 local wifi = component.modem
 local gpu = component.gpu
 
+-- ОБЩАЯ ИНФОРМАЦИЯ --
 local running = true
-local robot   = "7428dc80-98d3-4549-810a-1be9bb62d8d0"
 
---Colors--
-local bgworkspace = 0xD6D6D6
-local fgworkspace = 0xA6B0B6
+--Данные для подключения к роботу
+local port  = 1
+local robot = "cd95035b-fd10-4ac6-a836-722f80b72252"
 
-local bgworld = 0x5E5E5E
-local fgworld = 0xA6B0B6
+--Данные об инвентаре робота
+local robotInventory = nil
 
-local bgtoolbar   = 0x5E5E5E
-local bgtoolbar_button_active = 0xD6D6D6
-local bgtoolbar_button_inactive = 0x424242
+-- ЦВЕТОВАЯ СХЕМА --
+local COLOR_SCHEME = 
+{
+	workspace = {
+		bg = 0xD6D6D6,
+		fg = 0xA6B0B6
+	},
 
-local bgstatus_idle       = 0x00A81F
-local bgstatus_processing = 0xff0000
+	world = {
+		bg = 0x5E5E5E,
+		fg = 0xA6B0B6,
+	},
 
-local screenWidth, screenHeight = gpu.maxResolution()
-gpu.setResolution( screenWidth, screenHeight )
-wifi.open(1)
+	toolbar = {
+		bg = 0x5E5E5E,
+		fg = 0xffffff,
 
+		button = {
+			active = {
+				bg = 0xD6D6D6
+			},
+
+			inactive = {
+				bg = 0x424242
+			}
+		}
+	},
+
+	inverntory = {
+		bginventory = 0xff0000,
+		fginventory = 0xffffff,
+	},
+
+	status = {
+		idle       = 0x00A81F,
+		processing = 0xBF2008
+	}
+}
+
+-- ПОЛЕЗНЫЕ ФУНКЦИИ --
 local function alignCenterX( sx, width, string )
 	return width/2 - unicode.len(string)/2 + sx
 end
 
+local function ticker( text )
+	return unicode.sub( text, 2, unicode.len(text) ) .. unicode.sub( text, 1, 1 )
+end
+
+-- ПРЕДИНИЦИАЛИЗАЦИЯ --
+
+--Инициализация компанентов
+if ( gpu and gpu.maxDepth() == 8 ) then
+	gpu.setDepth(8)
+else
+	error("Graphic card not found! Or the GPU max depth less 8 bit.")
+end
+
+if ( wifi and wifi.isWireless() ) then
+	wifi.open( port )
+else
+	error("Wireless modem not found! Or the modem not wireless.")
+end
+
+--Получение данных о размере экрана
+local screenWidth, screenHeight = gpu.maxResolution()
+local workspaceRect = rect.CreateRectXYWH("ScreenBound", 1, 7, screenWidth, screenHeight-6)
+gpu.setResolution( screenWidth, screenHeight )
+
+-- ОПЕРАЦИИ НАД СОСТОЯНИЯМИ ПРОГРАММЫ --
 local IDLE       = 0
 local PROCESSING = 1
 local status = IDLE
@@ -44,11 +105,11 @@ local function setStatus( status )
 	gpu.setForeground( 0xffffff )
 
 	if ( status == IDLE ) then
-		gpu.setBackground( bgstatus_idle )
+		gpu.setBackground( COLOR_SCHEME.status.idle )
 		gpu.fill( 145, 4, 15, 1, ' ' )
 		gpu.set( 145, 4, "⏳║ ОЖИДАНИЕ" )
 	elseif ( status == PROCESSING ) then
-		gpu.setBackground( bgstatus_processing )
+		gpu.setBackground( COLOR_SCHEME.status.processing )
 		gpu.fill( 145, 4, 15, 1, ' ' )
 		gpu.set( 145, 4, "⏳║ ВЫПОЛЕНИЕ" )
 	end
@@ -56,6 +117,13 @@ local function setStatus( status )
 	gpu.setForeground( fgprev )
 end
 
+-- ОПЕРАЦИИ ДЛЯ ОТРИСОВКИ КАРТЫ --
+
+--Данные для скорллинга карты
+local scrollX, scrollY = 0, 0
+local scrollStep = 5
+
+--Данные о возможных символах карты
 local UNEXPLORED     = 0
 local EXPLORED       = 1
 local DESTRUCTIBLE   = 2
@@ -76,6 +144,7 @@ local worldGlyph =
 	[REPLACEABLE] = '?',
 }
 
+--Данные о повороте робота относительно начального поворота
 local PLAYER_FW  = 0
 local PLAYER_RR  = 1
 local PLAYER_BW  = 2
@@ -88,6 +157,7 @@ local playerDir =
 	[3] = '◄',
 }
 
+-- ??? --
 local detectStat =
 {
 	entity = ENTITY,
@@ -99,16 +169,19 @@ local detectStat =
 	[true] = EXPLORED,
 }
 
+--Информация о роботе и карте
 local player = { x = 0, y = 0, dir = PLAYER_FW, layer = 0 }
 local world =
 {
 	[0] = {},
 }
 
+--Добавить метку на карту
 local function addObject( objx, objy, objglyph, layer )
 	table.insert( world[layer], { x = objx, y = objy, glyph = objglyph } )
 end
 
+--Добавить метку на карту в направлении взгляда робота
 local function addObjectAtLookPlayer( objglyph, layer, isBack )
 	local direction = isBack and -1 or 1
 
@@ -123,6 +196,7 @@ local function addObjectAtLookPlayer( objglyph, layer, isBack )
 	end
 end
 
+--Перемещние робота в направлении его взгляда
 local function movePlayerAtLook( isBack )
 	local direction = isBack and -1 or 1
 
@@ -137,68 +211,37 @@ local function movePlayerAtLook( isBack )
 	end
 end
 
+--Перерисовка карты
 local function redrawWorkspace(sx, sy, layer)
-	for i, obj in ipairs(world[layer]) do
-		gpu.set( sx+obj.x, sy+obj.y, worldGlyph[obj.glyph] )
+	gpu.setBackground( COLOR_SCHEME.workspace.bg )
+	gpu.setForeground( COLOR_SCHEME.workspace.fg )
+	gpu.fill( workspaceRect.sx, workspaceRect.sy, workspaceRect.width, workspaceRect.height, '+' )
+
+	gpu.setBackground( COLOR_SCHEME.world.bg )
+	gpu.setForeground( COLOR_SCHEME.world.fg )
+
+	if ( not rect.PointInRect(sx+player.x+scrollX, sy+player.y+scrollY, workspaceRect) ) then
+		if (sx+player.x+scrollX <= workspaceRect.sx) then
+			scrollX = scrollX + scrollStep
+		elseif (sx+player.x+scrollX >= workspaceRect.ex) then
+			scrollX = scrollX - scrollStep
+		elseif (sy+player.y+scrollY <= workspaceRect.sy) then
+			scrollY = scrollY + scrollStep
+		elseif (sy+player.y+scrollY >= workspaceRect.ey) then
+			scrollY = scrollY - scrollStep
+		end
 	end
 
-	gpu.set( sx+player.x, sy+player.y, playerDir[player.dir] )
+	for i, obj in ipairs(world[layer]) do
+		if ( rect.PointInRect(sx+obj.x+scrollX, sy+obj.y+scrollY, workspaceRect) ) then
+			gpu.set( sx+obj.x+scrollX, sy+obj.y+scrollY, worldGlyph[obj.glyph] )
+		end
+	end
+	gpu.set( sx+player.x+scrollX, sy+player.y+scrollY, playerDir[player.dir] )
 end
-
---Draw workspace
-gpu.setBackground( bgworkspace )
-gpu.setForeground( fgworkspace )
-gpu.fill( 1, 1, screenWidth, screenHeight, ' ' )
-gpu.fill( 1, 7, screenWidth, screenHeight-7, '+' )
-
-gpu.setForeground( 0xffffff )
---Draw control panel
-gpu.setBackground( bgtoolbar )
-gpu.fill( 1, 1, screenWidth, 6, ' ' )
-
---Draw inset inactive
-gpu.setBackground( bgtoolbar_button_inactive )
-gpu.fill( 2, 1, 12, 6, ' ' )
-gpu.set( alignCenterX(2, 12, "АВТО"), 3, "АВТО" )
-gpu.set( alignCenterX(2, 12, "УПРАВЛЕНИЕ"), 4, "УПРАВЛЕНИЕ" )
-
---Draw inset active
-gpu.setBackground( bgtoolbar_button_active )
-gpu.fill( 15, 1, 12, 6, ' ' )
-gpu.set( alignCenterX(15, 12, "РУЧНОЕ"), 3, "РУЧНОЕ" )
-gpu.set( alignCenterX(15, 12, "УПРАВЛЕНИЕ"), 4, "УПРАВЛЕНИЕ" )
-
-local buttonDesign = {
-	blink_time = 0.2,
-
-	[0] = {
-		bg = bgtoolbar_button_inactive,
-		fg = 0xffffff,
-		char = ' '
-	},
-
-	[5] = {
-		bg = 0xffffff,
-		fg = 0,
-		char = ' '
-	},
-
-	[10] = {
-		bg = bgtoolbar_button_active,
-		fg = 0xffffff,
-		char = ' '
-	}
-}
-
-local function zagluska()
-
-end
-
-local toolbarButtons = {}
-local buttonRect = nil
 
 ------------------------------------------------------------------------------------------------
-gpu.setBackground( bgtoolbar_button_inactive )
+--[[gpu.setBackground( bgtoolbar_button_inactive )
 gpu.fill( 97, 2, 3, 1, ' ' )
 gpu.set( alignCenterX(97, 3, "1"), 2, "▲" )
 
@@ -248,15 +291,10 @@ gpu.set( alignCenterX(140, 3, "1"), 4, "▀" )
 
 gpu.setBackground( bgtoolbar_button_inactive )
 gpu.fill( 140, 5, 3, 1, ' ' )
-gpu.set( alignCenterX(140, 3, "1"), 5, "▼" )
+gpu.set( alignCenterX(140, 3, "1"), 5, "▼" )--]]
+------------------------------------------------------------------------------------------------
 
--- MAIN LOOP --
-gpu.setBackground( bgworld )
-gpu.setForeground( fgworld )
-
-addObject( player.x, player.y, EXPLORED, player.layer )
-redrawWorkspace(screenWidth/2, screenHeight/2+3, player.layer)
-
+--Запросы сервера отсылаемые роботу
 local control =
 {
 	["use"] = function()
@@ -266,6 +304,16 @@ local control =
 
 	["place"] = function()
 		wifi.send(robot, 1, "robot.place")
+		setStatus( PROCESSING )
+	end,
+
+	["getInventory"] = function()
+		wifi.send(robot, 1, "robot.getInventory")
+		setStatus( PROCESSING )
+	end,
+
+	["selectSlot"] = function(slot)
+		wifi.send(robot, 1, "robot.selectSlot", slot)
 		setStatus( PROCESSING )
 	end,
 
@@ -291,7 +339,6 @@ local control =
 
 	[42] = function()
 		wifi.send(robot, 1, "robot.shutdown")
-		running = false
 	end, --shift
 
 	[22] = function()
@@ -315,6 +362,8 @@ local control =
 		setStatus( PROCESSING )
 	end, --z
 }
+
+--Если обнаружена попытка отправить несуществующий запрос роботу, то остановить программу сервера.
 local meta = {}
 function meta.__index(op, key)
 	return function()
@@ -323,13 +372,115 @@ function meta.__index(op, key)
 end
 setmetatable( control, meta )
 
---Команды, которые я принимаю
+-- ИНВЕНТАРЬ --
+local tickerTimer = nil
+local updateInventoryButton = nil
+local visibleInventoryList = false
+
+--Создание кнопок инвентаря
+updateInventoryButton = button.create(gpu, nil, {"ПРОВЕРИТЬ ИНВЕНТАРЬ"}, control["getInventory"], buttonDesign)
+updateInventoryButton.rectangle = rect.CreateRectXYWH("UpdateInventory", screenWidth-71, screenHeight-6, 21, 3)
+
+--Бегущая строка, прокручивает название предмета
+local function tickerSlot()
+	for i, value in ipairs(robotInventory) do
+		if ( value ) then
+			value.name = ticker( value.name )
+			slot.slots[i]:redrawOutlineText(value.name)
+		end
+	end
+end
+
+--Обновить информацию об инвентаре
+local function updateInventory()
+	if ( #slot.slots < 1 ) then return nil end
+
+	--Заполнить слоты информацией и отрисовать
+	for i, value in ipairs(robotInventory) do
+		if ( value ) then
+			slot.slots[i].text = value.name
+			slot.slots[i].stackSize = value.size
+			slot.slots[i].maxStackSize = value.maxSize
+			slot.slots[i].durability = value.maxDamage - value.damage
+			slot.slots[i].maxDurability = value.maxDamage
+		end
+
+		if ( visibleInventoryList ) then
+			slot.slots[i]:redraw()
+			slot.slots[i]:redrawOutlineText()
+		end
+	end
+
+	--Обвести рамкой текущий слот робота
+	slot.slots[robotInventory.selectedSlot].status = 5
+	slot.firstSelectedSlot = slot.slots[robotInventory.selectedSlot]
+	slot.slots[robotInventory.selectedSlot]:redrawOutline()
+end
+
+--Отобразить или спрятать инвентарь робота
+local function drawInventoryList()
+	local _slot = nil
+
+	--Отрисовка заднего фона для инвентрая
+	gpu.setBackground( COLOR_SCHEME.workspace.fg )
+	gpu.fill( 87, 7, 74, screenHeight-6, ' ' )
+
+	--Отрисовка кнопки обновления инвентаря
+	updateInventoryButton.status = 0
+	updateInventoryButton:redraw()
+
+	--Изменить размер карты
+	rect.RecalculateWH(workspaceRect, 86, nil)
+
+	--Создать слоты
+	for y=0, 3, 1 do
+		for x=0, 3, 1 do
+			_slot = slot.create(gpu, 89+(18*y), 8+(9*x), 16, 8)
+			_slot:redraw()
+			_slot:redrawOutline()
+		end
+	end
+
+	--Обновить инвентарь и установить коллбэк функцию для установки слота на роботе
+	control["getInventory"]()
+	slot.callback = control["selectSlot"]
+
+	--Запустить прокрутку названий предметов и перерисовать карту
+	tickerTimer = event.timer( 0.3, tickerSlot, math.huge )
+	redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
+
+	--Запустить обработку слотов
+	slot.init()
+end
+
+--Скрыть инвентарь и остановить обработку слотов
+local function hideInventory()
+	slot.stop()
+	event.cancel(tickerTimer)
+
+	updateInventoryButton.status = 5
+
+	rect.RecalculateWH(workspaceRect, screenWidth, nil)
+	redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
+end
+
+--Отрисовать\скрыть инвентарь
+local function switchInventoryListVisible()
+	visibleInventoryList = not visibleInventoryList
+	if ( visibleInventoryList ) then
+		drawInventoryList()
+	else
+		hideInventory()
+	end
+end
+
+--Ответы робота на запросы сервера
 local commands = 
 {
 	["server.forward"] = function( result, reason )
 		addObjectAtLookPlayer( result and EXPLORED or detectStat[ reason ], player.layer )
 		if ( result ) then movePlayerAtLook() end
-		redrawWorkspace(screenWidth/2, screenHeight/2+3, player.layer)
+		redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
 
 		setStatus( IDLE )
 	end,
@@ -337,7 +488,7 @@ local commands =
 	["server.backward"] = function( result, reason )
 		addObjectAtLookPlayer( result and EXPLORED or detectStat[ reason ], player.layer, true )
 		if ( result ) then movePlayerAtLook(true) end
-		redrawWorkspace(screenWidth/2, screenHeight/2+3, player.layer)
+		redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
 
 		setStatus( IDLE )
 	end,
@@ -350,14 +501,14 @@ local commands =
 
 	["server.turnLeft"] = function()
 		player.dir = (player.dir-1) % (#playerDir+1)
-		redrawWorkspace(screenWidth/2, screenHeight/2+3, player.layer)
+		redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
 
 		setStatus( IDLE )
 	end,
 
 	["server.turnRight"] = function()
 		player.dir = (player.dir+1) % (#playerDir+1)
-		redrawWorkspace(screenWidth/2, screenHeight/2+3, player.layer)
+		redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
 
 		setStatus( IDLE )
 	end,
@@ -372,27 +523,15 @@ local commands =
 			durability = "Invul. tool"
 		end
 
-		gpu.setBackground( bgtoolbar_button_inactive )
-		gpu.setForeground( 0xffffff )
-
 		gpu.fill( 145, 3, 15, 1, ' ' )
 		gpu.set( 145, 3, "⚒║ " .. durability )
-
-		gpu.setBackground( bgworld )
-		gpu.setForeground( fgworld )
 
 		setStatus( IDLE )
 	end,
 
 	["server.getEnergy"] = function( energy )
-		gpu.setBackground( bgtoolbar_button_inactive )
-		gpu.setForeground( 0xffffff )
-
 		gpu.fill( 145, 2, 15, 1, ' ' )
 		gpu.set( 145, 2, " ☇║ " .. energy )
-
-		gpu.setBackground( bgworld )
-		gpu.setForeground( fgworld )
 	end,
 
 	["server.up"] = function( result, reason )
@@ -400,16 +539,10 @@ local commands =
 
 		if ( result ) then
 			player.layer = player.layer + 1
-
-			gpu.setBackground( bgworkspace )
-			gpu.setForeground( fgworkspace )
-			gpu.fill( 1, 7, screenWidth, screenHeight-7, '+' )
-			gpu.setBackground( bgworld )
-			gpu.setForeground( fgworld )
 		end
 
 		addObject( player.x, player.y, result and EXPLORED or detectStat[ reason ], result and player.layer or player.layer+1 )
-		redrawWorkspace(screenWidth/2, screenHeight/2+3, player.layer)
+		redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
 
 		setStatus( IDLE )
 	end,
@@ -419,23 +552,17 @@ local commands =
 
 		if ( result ) then
 			player.layer = player.layer - 1
-
-			gpu.setBackground( bgworkspace )
-			gpu.setForeground( fgworkspace )
-			gpu.fill( 1, 7, screenWidth, screenHeight-7, '+' )
-			gpu.setBackground( bgworld )
-			gpu.setForeground( fgworld )
 		end
 
 		addObject( player.x, player.y, result and EXPLORED or detectStat[ reason ], result and player.layer or player.layer-1 )
-		redrawWorkspace(screenWidth/2, screenHeight/2+3, player.layer)
+		redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
 
 		setStatus( IDLE )
 	end,
 
 	["server.detect"] = function( result, reason )
 		addObjectAtLookPlayer( detectStat[ reason ], player.layer )
-		redrawWorkspace(screenWidth/2, screenHeight/2+3, player.layer)
+		redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
 
 		setStatus( IDLE )
 	end,
@@ -453,82 +580,217 @@ local commands =
 
 		setStatus( IDLE )
 	end,
+
+	["server.slotSelected"] = function()
+		setStatus( IDLE )
+	end,
+
+	["server.getInventory"] = function( result, selectedSlot )
+		robotInventory = ser.unserialize(result)
+		robotInventory.selectedSlot = selectedSlot
+
+		updateInventory()
+
+		setStatus( IDLE )
+	end,
 }
+
+--Если пришел неожиданный ответ от робота, то ничего не делать
 local meta = {}
 function meta.__index(op, key)
-	return function() end
+	return function() --[[НИЧЕГО НЕ ДЕЛАТЬ--]] end
 end
 setmetatable( commands, meta )
 
---Draw button active 
-buttonRect = rect.CreateRectXYWH("ButtonMoveForward", 27, 2, 10, 4)
-toolbarButtons.buttonForward = button.create(gpu, buttonRect, {"W▲", "ВПЕРЁД"}, control[17], buttonDesign)
-toolbarButtons.buttonForward:redraw()
+-- ОТРИСОВКА ТУЛБАРА --
 
-buttonRect = rect.CreateRectXYWH("ButtonMoveBackward", 37, 2, 10, 4)
-toolbarButtons.buttonBackward = button.create(gpu, buttonRect, {"S▼", "НАЗАД"}, control[31], buttonDesign)
-toolbarButtons.buttonBackward:redraw()
+--Отрисовка пустой карты
+gpu.setBackground( COLOR_SCHEME.workspace.bg )
+gpu.setForeground( COLOR_SCHEME.workspace.fg )
+gpu.fill( 1, 1, screenWidth, screenHeight, ' ' )
 
-buttonRect = rect.CreateRectXYWH("ButtonMoveRight", 47, 2, 10, 4)
-toolbarButtons.buttonRight = button.create(gpu, buttonRect, {"D►", "ВПРАВО"}, control[32], buttonDesign)
-toolbarButtons.buttonRight:redraw()
+--Отрисовка заднего фона тулбара
+gpu.setBackground( COLOR_SCHEME.toolbar.bg )
+gpu.setForeground( COLOR_SCHEME.toolbar.fg )
+gpu.fill( 1, 1, screenWidth, 6, ' ' )
 
-buttonRect = rect.CreateRectXYWH("ButtonMoveLeft", 57, 2, 10, 4)
-toolbarButtons.buttonLeft = button.create(gpu, buttonRect, {"A◄", "ВЛЕВО"}, control[30], buttonDesign)
-toolbarButtons.buttonLeft:redraw()
+--Отрисовка вкладок
+gpu.setBackground( COLOR_SCHEME.toolbar.button.inactive.bg )
+gpu.fill( 2, 1, 12, 6, ' ' )
+gpu.set( alignCenterX(2, 12, "АВТО"), 3, "АВТО" )
+gpu.set( alignCenterX(2, 12, "УПРАВЛЕНИЕ"), 4, "УПРАВЛЕНИЕ" )
 
-buttonRect = rect.CreateRectXYWH("ButtonMoveDown", 67, 2, 10, 4)
-toolbarButtons.buttonDown = button.create(gpu, buttonRect, {"E•", "ВНИЗ"}, control[18], buttonDesign)
-toolbarButtons.buttonDown:redraw()
+gpu.setBackground( COLOR_SCHEME.toolbar.button.active.bg )
+gpu.fill( 15, 1, 12, 6, ' ' )
+gpu.set( alignCenterX(15, 12, "РУЧНОЕ"), 3, "РУЧНОЕ" )
+gpu.set( alignCenterX(15, 12, "УПРАВЛЕНИЕ"), 4, "УПРАВЛЕНИЕ" )
 
-buttonRect = rect.CreateRectXYWH("ButtonMoveUp", 77, 2, 10, 4)
-toolbarButtons.buttonUp = button.create(gpu, buttonRect, {"Q○", "ВВЕРХ"}, control[16], buttonDesign)
-toolbarButtons.buttonUp:redraw()
+--Данные о виде кнопок
+local buttonDesign = {
+	blink_time = 0.2,
 
-buttonRect = rect.CreateRectXYWH("ButtonSwing", 87, 2, 10, 4)
-toolbarButtons.buttonSwing = button.create(gpu, buttonRect, {"⚒", "УДАР"}, control[22], buttonDesign)
-toolbarButtons.buttonSwing:redraw()
+	[0] = {
+		bg = COLOR_SCHEME.toolbar.button.inactive.bg,
+		fg = 0xffffff,
+		char = ' '
+	},
 
-buttonRect = rect.CreateRectXYWH("ButtonUse", 101, 2, 10, 4)
-toolbarButtons.buttonUse = button.create(gpu, buttonRect, {"⚙", "ИСП."}, control["use"], buttonDesign)
-toolbarButtons.buttonUse:redraw()
+	[5] = {
+		bg = 0xffffff,
+		fg = 0,
+		char = ' '
+	},
 
-buttonRect = rect.CreateRectXYWH("ButtonDetect", 115, 2, 10, 4)
-toolbarButtons.buttonDetect = button.create(gpu, buttonRect, {"⍰" ,"ПРОВЕР."}, control[44], buttonDesign)
-toolbarButtons.buttonDetect:redraw()
+	[10] = {
+		bg = COLOR_SCHEME.toolbar.button.active.bg,
+		fg = 0xffffff,
+		char = ' '
+	}
+}
 
-buttonRect = rect.CreateRectXYWH("ButtonPlace", 130, 2, 10, 4)
-toolbarButtons.buttonPlace = button.create(gpu, buttonRect, {"▣" ,"РАЗМЕСТ."}, control["place"], buttonDesign)
-toolbarButtons.buttonPlace:redraw()
+--Данные о местоположении, надпиcям и действиям кнопок
+local toolbarButtonsInfo =
+{
+	sx = 27,
+	sy = 2,
+	width = 10,
+	height = 4,
 
+	count = 11,
+
+	[0] = {
+		name = "buttonForward",
+		text = {"W▲", "ВПЕРЁД"},
+		callback = control[17]
+	},
+
+	[1] = {
+		name = "buttonBackward",
+		text = {"S▼", "НАЗАД"},
+		callback = control[31]
+	},
+
+	[2] = {
+		name = "buttonRight",
+		text = {"D►", "ВПРАВО"},
+		callback = control[32]
+	},
+
+	[3] = {
+		name = "buttonLeft",
+		text = {"A◄", "ВЛЕВО"},
+		callback = control[30]
+	},
+
+	[4] = {
+		name = "buttonDown",
+		text = {"E•", "ВНИЗ"},
+		callback = control[18]
+	},
+
+	[5] = {
+		name = "buttonUp",
+		text = {"Q○", "ВВЕРХ"},
+		callback = control[16]
+	},
+
+	[6] = {
+		name = "buttonSwing",
+		text = {"⚒", "УДАР"},
+		callback = control[22]
+	},
+
+	[7] = {
+		name = "buttonUse",
+		text = {"⚙", "ИСП."},
+		callback = control["use"]
+	},
+
+	[8] = {
+		name = "buttonDetect",
+		text = {"⯑" ,"ПРОВЕР."},
+		callback = control[44]
+	},
+
+	[9] = {
+		name = "buttonPlace",
+		text = {"⬛" ,"РАЗМЕСТ."},
+		callback = control["place"]
+	},
+
+	[10] = {
+		name = "buttonInventory",
+		text = {"✉", "Инвентарь"},
+		callback = switchInventoryListVisible
+	}
+
+}
+
+--Отрисовка кнопок
+for i=0, toolbarButtonsInfo.count-1, 1 do
+	local _buttonInfo = toolbarButtonsInfo[i]
+	local _rect = rect.CreateRectXYWH
+	(
+		toolbarButtonsInfo.name,
+		toolbarButtonsInfo.sx+(toolbarButtonsInfo.width*i),
+		toolbarButtonsInfo.sy,
+		toolbarButtonsInfo.width, 
+		toolbarButtonsInfo.height
+	)
+
+	button.create(gpu, _rect, _buttonInfo.text, _buttonInfo.callback, buttonDesign):redraw()
+end
+
+-- ИНИЦИАЛИЗАЦИЯ --
+
+--Удаление ненужных данных
+buttonDesign = nil
+toolbarButtonsInfo = nil
+
+--Получение начальной информации о роботе
 setStatus( PROCESSING )
 wifi.send( robot, 1, "robot.getInstumentData" )
 wifi.send( robot, 1, "robot.getEnergy" )
 
-local handlers = {}
-local function callback(timer, button)
-	if ( timer and button ) then
-		table.insert( handlers, button )
-	else
-		local btn = table.remove( handlers )
-		btn:handler()
-	end
-end
+--Первоначальная отрисовка карты
+gpu.setBackground( COLOR_SCHEME.world.bg )
+gpu.setForeground( COLOR_SCHEME.world.fg )
 
+addObject( player.x, player.y, EXPLORED, player.layer )
+redrawWorkspace(workspaceRect.width/2, workspaceRect.height/2+3, player.layer)
+
+--Запуск обработки кнопок
+button.start()
+
+--Игорева хуита
+--ecs.universalWindow("auto", "auto", 30, ecs.windowColors.background, true, {"EmptyLine"}, {"CenterText", 0x262626, "Сохранить как"}, {"EmptyLine"}, {"Input", 0x262626, 0x880000, "Путь"}, {"Selector", 0x262626, 0x880000, "PNG", "JPG", "PSD"}, {"EmptyLine"}, {"Button", {0xbbbbbb, 0xffffff, "OK!"}})
+
+-- ГЛАВНЫЙ ЦИКЛ ПРОГРАММЫ --
 while ( running ) do
 	local e = { event.pull() }
 
+	-- получение и обработка сообщений --
 	if ( e[1] == "modem_message" ) then
 		commands[ e[6] ]( e[7], e[8] )
 	end
 
+	-- обработка нажатий клавиш --
 	if ( e[1] == "key_down" ) then
 		control[ e[4] ]()
 	end
 
-	if ( e[1] == "touch" ) then
-		for name, button in pairs(toolbarButtons) do
-			button:handler(e, callback)
-		end
-	end
+	-- дебаг --
+	gpu.set( 1, 1, computer.freeMemory() .. ' / ' .. computer.totalMemory() )
 end
+
+-- УДАЛЕНИЕ ВСЕГО НЕНУЖНОГО И ВЫХОД ИЗ ПРОГРАММЫ--
+if ( tickerTimer ) then event.cancel(tickerTimer) end
+button.stop()
+slot.stop()
+wifi.close()
+
+--Выгрузка ненужных библиотек
+package.loaded["slot"] = nil
+package.loaded["button"] = nil
+package.loaded["rectangle"] = nil
+--package.loaded["ecs"] = nil
