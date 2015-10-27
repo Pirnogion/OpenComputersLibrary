@@ -84,7 +84,15 @@ end
 
 --Изменение высоты и ширины и переасчет структуры(запланировано).
 function rectangleAPI.RecalculateWH(rect, nwidth, nheight)
-	return nil
+	if ( nwidth ) then
+		rect.width = nwidth
+		rect.ex = rect.sx+rect.width
+	end
+
+	if ( nheight ) then
+		rect.height = nheight
+		rect.ey = rect.sy+rect.height
+	end
 end
 
 --Находится ли заданная точка внутри прямоугольника.
