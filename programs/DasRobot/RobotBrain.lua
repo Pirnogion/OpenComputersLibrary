@@ -8,12 +8,33 @@ local inventory = component.inventory_controller
 local wifi = component.modem
 
 local running = true
-local server = "71ac5e68-69ab-46ab-9ebe-f399f6f488dc"
+local server = loadfile("c.cfg")
+if ( server and type(server) == "function" ) then
+	server = server().address or nil
+else
+	server = nil
+end
 wifi.open(1)
 
 --Команды, которые я принимаю
 local commands = 
 {
+	["robot.access"] = function( _, address )
+		--if ( not server ) then
+			wifi.send(address, 1, "server.access.allow", inventory and true or false, robot.name() )
+			--print(address)
+		--end
+	end,
+
+	["robot.receive.address"] = function( _, address )
+		--if ( not server ) then
+			server = address
+			local f = io.open("c.cfg", "wb")
+			f:write("return\n{\n	address = \"" .. address .. "\",\n}" )
+			f:close()
+		--end
+	end,
+
 	["robot.forward"] = function()
 		local result, reason = robot.forward()
 		wifi.send(server, 1, "server.forward", result, reason)
@@ -71,7 +92,7 @@ local commands =
 		local durability, errorReason = robot.durability()
 
 		--local item = inventory.getStackInInternalSlot( 1 )
-		wifi.send(server, 1, "server.getInstumentData", durability or -errorReason)
+		wifi.send(server, 1, "server.getInstumentData", durability or -errorReason or false)
 	end,
 
 	["robot.getEnergy"] = function()
@@ -108,7 +129,7 @@ while (running) do
 	local e = { event.pull() }
 
 	if ( e[1] == "modem_message" ) then
-		commands[ e[6] ]( e[7] )
+		commands[ e[6] ]( e[7], e[3] )
 	end
 end
 
