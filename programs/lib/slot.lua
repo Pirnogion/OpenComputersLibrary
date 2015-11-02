@@ -162,6 +162,12 @@ function slotAPI.create(gpu, x, y, width, height, text, stackSize, maxStackSize,
 		gpu.set(alignCenterX(self.rect.sx, self.rect.width, descr_cutted), self.rect.ey, descr_cutted)
 	end
 
+	function slot:redrawOutlineText( text )
+		self.text = text
+		local descr_cutted = restrictString( text, self.rect.width-2, '' )
+		gpu.set(alignCenterX(self.rect.sx, self.rect.width, descr_cutted), self.rect.ey, descr_cutted)
+	end
+
 	function slot:destroy()
 		table.remove( slotAPI.slots, slot.id )
 	end
