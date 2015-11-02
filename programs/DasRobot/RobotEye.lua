@@ -20,7 +20,15 @@ local running = true
 
 --Данные для подключения к роботу
 local port  = 1
-local robot = "cd95035b-fd10-4ac6-a836-722f80b72252"
+local robot = nil
+
+local robot = loadfile("c.cfg")
+if ( robot and type(robot) == "function" ) then
+	robot = robot().address or nil
+else
+	robot = nil
+	error("This is computer is not configured!")
+end
 
 --Данные об инвентаре робота
 local robotInventory = nil
@@ -407,7 +415,7 @@ local function updateInventory()
 
 		if ( visibleInventoryList ) then
 			slot.slots[i]:redraw()
-			slot.slots[i]:redrawOutlineText()
+			slot.slots[i]:redrawOutline()
 		end
 	end
 
