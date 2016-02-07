@@ -28,10 +28,9 @@ end
 
 local function ButtonPressHandler( button, ... )
 	if ( button.mode == MODE_BUTTON ) then
-		button.action()
 		button.status = STATUS_BLINK
 		button:redraw()
-		button.timer = event.timer( button.design.blink_time, function() ButtonReleaseHandler( button ) end )
+		button.timer = event.timer( button.design.blink_time, function() ButtonReleaseHandler( button ); button.action() end )
 	elseif ( button.mode == MODE_INSET ) then
 		if ( button.status ~= STATUS_BLINK ) then
 			for button in buttons do
