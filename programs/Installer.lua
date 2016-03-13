@@ -9,7 +9,7 @@ local gpu = require "component".gpu
 local screenWidth, screenHeight = gpu.maxResolution()
 gpu.setResolution( screenWidth, screenHeight )
 
-local github = "https://raw.githubusercontent.com/Pirnogion/OpenComputers_library/master/programs"
+local github = "https://raw.githubusercontent.com/Pirnogion/MiniOS/master/"
 
 -- UTILS --
 local function DrawText_Center( y, string )
