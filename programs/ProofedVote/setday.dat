@@ -1,0 +1,5 @@
+topic: включить день
+accept: День включен по решению большинства проголосовавших игроков
+reject: Недостаточно голосов для включения дня
+delay: 20
+execute: "return function(libs, components) local overworld = components.debug.getWorld(); overworld.setTime(0); end"

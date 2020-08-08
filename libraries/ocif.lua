@@ -1,7 +1,3 @@
---------ocif--------
---Автор: Pirnogion--
---------------------
-
 --SWITCH
 local MODE = nil
 local PALETTE_PATH = "palette.cia"

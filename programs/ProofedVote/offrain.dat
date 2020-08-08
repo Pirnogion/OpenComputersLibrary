@@ -1,0 +1,5 @@
+topic: отключить дождь
+accept: Дождь отключен по решению большинства проголосовавших игроков
+reject: Недостаточно голосов за отключение дождя
+delay: 20
+execute: "return function(libs, components) local overworld = components.debug.getWorld(); overworld.setRaining(false); libs.event.pull(0.2); overworld.setThundering(false); end"
